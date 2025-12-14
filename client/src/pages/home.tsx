@@ -1,57 +1,72 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AppSidebar from "@/components/AppSidebar";
 import EndpointForm from "@/components/EndpointForm";
 import EmptyState from "@/components/EmptyState";
 import TestModal from "@/components/TestModal";
 import ThemeToggle from "@/components/ThemeToggle";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Endpoint } from "@/components/EndpointCard";
-import type { HttpMethod } from "@/components/MethodBadge";
-
-// todo: remove mock functionality
-const initialMockEndpoints: Endpoint[] = [
-  {
-    id: "1",
-    method: "GET",
-    path: "/api/users",
-    validationSchema: '{\n  "type": "object",\n  "additionalProperties": true\n}',
-    response: '{\n  "users": [\n    { "id": 1, "name": "John Doe" },\n    { "id": 2, "name": "Jane Smith" }\n  ]\n}',
-    statusCode: 200,
-  },
-  {
-    id: "2",
-    method: "POST",
-    path: "/api/users",
-    validationSchema: '{\n  "type": "object",\n  "properties": {\n    "name": { "type": "string" },\n    "email": { "type": "string", "format": "email" }\n  },\n  "required": ["name"],\n  "additionalProperties": true\n}',
-    response: '{\n  "id": 3,\n  "name": "New User",\n  "message": "User created successfully"\n}',
-    statusCode: 201,
-  },
-  {
-    id: "3",
-    method: "GET",
-    path: "/api/users/:id",
-    validationSchema: "{}",
-    response: '{\n  "id": 1,\n  "name": "John Doe",\n  "email": "john@example.com"\n}',
-    statusCode: 200,
-  },
-  {
-    id: "4",
-    method: "DELETE",
-    path: "/api/users/:id",
-    validationSchema: "{}",
-    response: '{\n  "message": "User deleted"\n}',
-    statusCode: 200,
-  },
-];
 
 export default function Home() {
-  // todo: remove mock functionality - replace with API calls
-  const [endpoints, setEndpoints] = useState<Endpoint[]>(initialMockEndpoints);
-  const [activeEndpointId, setActiveEndpointId] = useState<string | null>(
-    endpoints.length > 0 ? endpoints[0].id : null
-  );
+  const { toast } = useToast();
+  const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [testingEndpoint, setTestingEndpoint] = useState<Endpoint | null>(null);
+
+  const { data: endpoints = [], isLoading } = useQuery<Endpoint[]>({
+    queryKey: ["/api/endpoints"],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: Omit<Endpoint, "id">) => {
+      const res = await apiRequest("POST", "/api/endpoints", data);
+      return res.json();
+    },
+    onSuccess: (newEndpoint: Endpoint) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/endpoints"] });
+      setActiveEndpointId(newEndpoint.id);
+      setIsCreating(false);
+      toast({ title: "Endpoint created", description: `${newEndpoint.method} ${newEndpoint.path}` });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create endpoint", variant: "destructive" });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Omit<Endpoint, "id"> }) => {
+      const res = await apiRequest("PUT", `/api/endpoints/${id}`, data);
+      return res.json();
+    },
+    onSuccess: (updated: Endpoint) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/endpoints"] });
+      toast({ title: "Endpoint updated", description: `${updated.method} ${updated.path}` });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update endpoint", variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/endpoints/${id}`);
+      return id;
+    },
+    onSuccess: (deletedId: string) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/endpoints"] });
+      if (activeEndpointId === deletedId) {
+        setActiveEndpointId(null);
+      }
+      toast({ title: "Endpoint deleted" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to delete endpoint", variant: "destructive" });
+    },
+  });
 
   const activeEndpoint = endpoints.find((ep) => ep.id === activeEndpointId);
 
@@ -67,34 +82,23 @@ export default function Home() {
 
   const handleSave = (data: Omit<Endpoint, "id"> & { id?: string }) => {
     if (data.id) {
-      // Update existing
-      setEndpoints((prev) =>
-        prev.map((ep) => (ep.id === data.id ? { ...ep, ...data } as Endpoint : ep))
-      );
+      const { id, ...rest } = data;
+      updateMutation.mutate({ id, data: rest });
     } else {
-      // Create new
-      const newEndpoint: Endpoint = {
-        ...data,
-        id: crypto.randomUUID(),
-      } as Endpoint;
-      setEndpoints((prev) => [...prev, newEndpoint]);
-      setActiveEndpointId(newEndpoint.id);
-      setIsCreating(false);
+      createMutation.mutate(data);
     }
   };
 
   const handleDelete = (id: string) => {
-    setEndpoints((prev) => prev.filter((ep) => ep.id !== id));
-    if (activeEndpointId === id) {
-      setActiveEndpointId(endpoints.length > 1 ? endpoints[0].id : null);
-    }
-    setIsCreating(false);
+    deleteMutation.mutate(id);
   };
 
   const style = {
     "--sidebar-width": "18rem",
     "--sidebar-width-icon": "4rem",
   };
+
+  const isPending = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
@@ -120,7 +124,13 @@ export default function Home() {
             <ThemeToggle />
           </header>
           <main className="flex-1 overflow-auto p-6">
-            {endpoints.length === 0 && !isCreating ? (
+            {isLoading ? (
+              <div className="max-w-3xl mx-auto space-y-4">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-48 w-full" />
+                <Skeleton className="h-48 w-full" />
+              </div>
+            ) : endpoints.length === 0 && !isCreating ? (
               <EmptyState onCreateNew={handleCreateNew} />
             ) : isCreating ? (
               <div className="max-w-3xl mx-auto">
