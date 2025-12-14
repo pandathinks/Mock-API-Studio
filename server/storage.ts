@@ -1,37 +1,70 @@
-import { type User, type InsertUser } from "@shared/schema";
+import { type MockEndpoint, type InsertMockEndpoint } from "@shared/schema";
 import { randomUUID } from "crypto";
 
-// modify the interface with any CRUD methods
-// you might need
-
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getAllEndpoints(): Promise<MockEndpoint[]>;
+  getEndpoint(id: string): Promise<MockEndpoint | undefined>;
+  getEndpointByMethodAndPath(method: string, path: string): Promise<MockEndpoint | undefined>;
+  createEndpoint(endpoint: InsertMockEndpoint): Promise<MockEndpoint>;
+  updateEndpoint(id: string, endpoint: InsertMockEndpoint): Promise<MockEndpoint | undefined>;
+  deleteEndpoint(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+  private endpoints: Map<string, MockEndpoint>;
 
   constructor() {
-    this.users = new Map();
+    this.endpoints = new Map();
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async getAllEndpoints(): Promise<MockEndpoint[]> {
+    return Array.from(this.endpoints.values());
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
+  async getEndpoint(id: string): Promise<MockEndpoint | undefined> {
+    return this.endpoints.get(id);
+  }
+
+  async getEndpointByMethodAndPath(method: string, path: string): Promise<MockEndpoint | undefined> {
+    return Array.from(this.endpoints.values()).find(
+      (ep) => ep.method === method && this.matchPath(ep.path, path)
     );
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  private matchPath(pattern: string, actual: string): boolean {
+    // Convert route pattern like /api/users/:id to regex
+    const regexPattern = pattern
+      .split("/")
+      .map((segment) => {
+        if (segment.startsWith(":")) {
+          return "[^/]+";
+        }
+        return segment;
+      })
+      .join("/");
+    
+    const regex = new RegExp(`^${regexPattern}$`);
+    return regex.test(actual);
+  }
+
+  async createEndpoint(insertEndpoint: InsertMockEndpoint): Promise<MockEndpoint> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const endpoint: MockEndpoint = { ...insertEndpoint, id };
+    this.endpoints.set(id, endpoint);
+    return endpoint;
+  }
+
+  async updateEndpoint(id: string, insertEndpoint: InsertMockEndpoint): Promise<MockEndpoint | undefined> {
+    if (!this.endpoints.has(id)) {
+      return undefined;
+    }
+    const endpoint: MockEndpoint = { ...insertEndpoint, id };
+    this.endpoints.set(id, endpoint);
+    return endpoint;
+  }
+
+  async deleteEndpoint(id: string): Promise<boolean> {
+    return this.endpoints.delete(id);
   }
 }
 
