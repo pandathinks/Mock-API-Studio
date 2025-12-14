@@ -31,6 +31,11 @@ export class MemStorage implements IStorage {
     );
   }
 
+  private escapeRegex(str: string): string {
+    // Escape regex metacharacters for literal matching
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   private matchPath(pattern: string, actual: string): boolean {
     // Convert route pattern like /api/users/:id to regex
     const regexPattern = pattern
@@ -39,9 +44,10 @@ export class MemStorage implements IStorage {
         if (segment.startsWith(":")) {
           return "[^/]+";
         }
-        return segment;
+        // Escape regex metacharacters in literal segments
+        return this.escapeRegex(segment);
       })
-      .join("/");
+      .join("\\/");
     
     const regex = new RegExp(`^${regexPattern}$`);
     return regex.test(actual);
