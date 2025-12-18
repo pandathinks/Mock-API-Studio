@@ -1,5 +1,7 @@
 import { type MockEndpoint, type InsertMockEndpoint } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { promises as fs } from "fs";
+import { join, dirname } from "path";
 
 export interface IStorage {
   getAllEndpoints(): Promise<MockEndpoint[]>;
@@ -74,4 +76,81 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export class PersistentStorage extends MemStorage {
+  private filePath: string;
+  private saveTimeout: NodeJS.Timeout | null = null;
+
+  constructor(filePath: string = join(process.cwd(), "data", "endpoints.json")) {
+    super();
+    this.filePath = filePath;
+  }
+
+  async initialize(): Promise<void> {
+    await this.loadFromFile();
+  }
+
+  private async loadFromFile(): Promise<void> {
+    try {
+      await fs.mkdir(dirname(this.filePath), { recursive: true });
+      const data = await fs.readFile(this.filePath, "utf-8");
+      const endpoints: MockEndpoint[] = JSON.parse(data);
+
+      for (const endpoint of endpoints) {
+        (this as any).endpoints.set(endpoint.id, endpoint);
+      }
+
+      console.log(`Loaded ${endpoints.length} endpoints from ${this.filePath}`);
+    } catch (error: any) {
+      if (error.code === "ENOENT") {
+        console.log("No existing endpoints file found, starting fresh");
+      } else {
+        console.error("Error loading endpoints:", error);
+      }
+    }
+  }
+
+  private async saveToFile(): Promise<void> {
+    try {
+      await fs.mkdir(dirname(this.filePath), { recursive: true });
+      const endpoints = await this.getAllEndpoints();
+      await fs.writeFile(this.filePath, JSON.stringify(endpoints, null, 2), "utf-8");
+      console.log(`Saved ${endpoints.length} endpoints to ${this.filePath}`);
+    } catch (error) {
+      console.error("Error saving endpoints:", error);
+    }
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = setTimeout(() => {
+      this.saveToFile();
+      this.saveTimeout = null;
+    }, 100);
+  }
+
+  async createEndpoint(insertEndpoint: InsertMockEndpoint): Promise<MockEndpoint> {
+    const endpoint = await super.createEndpoint(insertEndpoint);
+    this.scheduleSave();
+    return endpoint;
+  }
+
+  async updateEndpoint(id: string, insertEndpoint: InsertMockEndpoint): Promise<MockEndpoint | undefined> {
+    const endpoint = await super.updateEndpoint(id, insertEndpoint);
+    if (endpoint) {
+      this.scheduleSave();
+    }
+    return endpoint;
+  }
+
+  async deleteEndpoint(id: string): Promise<boolean> {
+    const result = await super.deleteEndpoint(id);
+    if (result) {
+      this.scheduleSave();
+    }
+    return result;
+  }
+}
+
+export const storage = new PersistentStorage();
